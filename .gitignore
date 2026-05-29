@@ -1,0 +1,9 @@
+venv/
+patches/
+__pycache__/
+*.egg-info/
+*.tmp.tif
+*.uncompressed.tmp.tif
+diagnostics*/
+*.tif
+*.tiff

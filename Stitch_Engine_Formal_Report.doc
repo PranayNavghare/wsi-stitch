@@ -1,0 +1,143 @@
+﻿<html>
+<head>
+<meta charset="utf-8">
+<style>
+body{font-family:Calibri,Arial,sans-serif;font-size:11pt;line-height:1.38;color:#222;margin:36pt;}
+h1{font-size:24pt;text-align:center;margin-bottom:4pt;}
+h2{font-size:16pt;margin-top:18pt;margin-bottom:8pt;color:#1f4e79;border-bottom:1px solid #b8cce4;padding-bottom:3pt;}
+h3{font-size:13pt;margin-top:14pt;margin-bottom:6pt;color:#1f4e79;}
+p{margin:6pt 0;} ul{margin-top:4pt;margin-bottom:8pt;} li{margin-bottom:3pt;}
+table{border-collapse:collapse;width:100%;margin:8pt 0 12pt 0;} th,td{border:1px solid #999;padding:5pt;vertical-align:top;} th{background:#d9eaf7;font-weight:bold;}
+pre{background:#f4f4f4;border:1px solid #ddd;padding:8pt;font-family:Consolas,monospace;font-size:9pt;white-space:pre-wrap;}
+.subtitle{text-align:center;color:#555;margin-bottom:20pt;}.note{background:#fff7dd;border-left:4pt solid #f0b429;padding:8pt;margin:10pt 0;}
+</style>
+</head>
+<body>
+<h1>Stitch Engine Project Report</h1>
+<p class="subtitle">Variable-Overlap Patch Stitching With Jitter Correction and TIFF Output</p>
+
+<h2>1. Executive Summary</h2>
+<p>This project implements a patch-based image stitching engine for large microscopy and PCB-style mosaics. The engine reconstructs a large image from overlapping image patches when the nominal patch grid is known but actual capture positions may contain camera or stage vibration.</p>
+<p>The current implementation supports filename-based patch coordinates, content-based jitter correction, global layout solving, sharp cell-based output writing, TIFF metadata handling, and automatic compressed pyramidal BigTIFF generation.</p>
+
+<h2>2. Project Goals</h2>
+<ul>
+<li>Reconstruct large images from overlapping patch folders.</li>
+<li>Support variable overlap caused by stage or camera jitter.</li>
+<li>Avoid blurry output caused by averaging misaligned overlaps.</li>
+<li>Keep memory usage low enough for large mosaics.</li>
+<li>Write QuPath-compatible TIFF output with scale metadata and pyramids.</li>
+<li>Keep the implementation small, testable, and independent of large external stitching frameworks.</li>
+</ul>
+
+<h2>3. Input Assumptions</h2>
+<p>The engine expects a folder of image patches. The preferred naming convention includes base x/y coordinates in each filename:</p>
+<pre>idx000000_x000000_y000000.tif
+idx000001_x000512_y000000.tif
+idx000002_x001024_y000000.tif</pre>
+<p>The x/y values represent the nominal acquisition grid. In alignment mode, these coordinates are treated as an initial estimate rather than an exact final placement.</p>
+<p>The patch size is detected automatically from the first patch. The main test case used 1024 x 1024 patches with 50% overlap, but the engine is not limited to that size as long as all patches are consistent.</p>
+
+<h2>4. System Architecture</h2>
+<table>
+<tr><th>Component</th><th>Responsibility</th></tr>
+<tr><td>Patch folder entry point</td><td>Discovers patches, parses filename coordinates, prepares base layout, runs alignment, and writes output.</td></tr>
+<tr><td>Alignment module</td><td>Estimates local jitter between neighboring patches using overlap content and solves a global corrected layout.</td></tr>
+<tr><td>Scheduler module</td><td>Provides fixed and variable grid planning utilities for patch workflows.</td></tr>
+<tr><td>Stitch canvas</td><td>Supports accumulation and averaging of overlapping image blocks.</td></tr>
+<tr><td>VIPS helper</td><td>Configures project-local VIPS binaries on Windows before TIFF compression.</td></tr>
+<tr><td>Patch generation tool</td><td>Creates test patches from larger source images and can simulate jitter.</td></tr>
+</table>
+
+<h2>5. Stitching Algorithm</h2>
+<h3>5.1 Base Layout</h3>
+<p>The engine first builds a rough mosaic layout from filename coordinates. For example, with 1024 px patches and 50% overlap, the expected nominal stride is approximately 512 px.</p>
+
+<h3>5.2 Local Jitter Estimation</h3>
+<p>In alignment mode, neighboring patches are compared in their overlap regions. Phase correlation estimates the offset needed to align the moving patch to the reference patch. The matcher searches around the expected overlap using the configured jitter range.</p>
+
+<h3>5.3 Global Layout Solve</h3>
+<p>The engine does not simply chain patches row by row. It gathers reliable neighbor matches and solves a global corrected layout. Filename coordinates remain as weak anchors, which helps stabilize blank or low-texture regions.</p>
+
+<h3>5.4 Output Writing</h3>
+<p>The current best visual output uses the cell writer. Instead of averaging overlapping patches, the cell writer assigns each patch a central ownership region and writes that region at the corrected position. This avoids blur and doubled structures caused by averaging slightly misaligned patches.</p>
+
+<h2>6. Runtime Parameters</h2>
+<table>
+<tr><th>Parameter</th><th>Purpose</th></tr>
+<tr><td>--from-filenames</td><td>Reads nominal x/y coordinates from patch filenames.</td></tr>
+<tr><td>--mode align</td><td>Enables content-based jitter correction.</td></tr>
+<tr><td>--align-matcher phase</td><td>Uses phase correlation for offset estimation.</td></tr>
+<tr><td>--overlap-percent</td><td>Defines the base overlap used during patch generation.</td></tr>
+<tr><td>--jitter-percent</td><td>Defines the search range around the expected overlap.</td></tr>
+<tr><td>--align-downsample</td><td>Controls alignment resolution. Lower values are more accurate but slower.</td></tr>
+<tr><td>--align-min-score</td><td>Minimum score required to accept a local match.</td></tr>
+<tr><td>--align-base-weight</td><td>Controls how strongly the global solver remains anchored to filename coordinates.</td></tr>
+<tr><td>--align-solver-iterations</td><td>Number of relaxation iterations used by the global layout solver.</td></tr>
+<tr><td>--writer cell</td><td>Writes sharp corrected cell regions instead of averaging overlaps.</td></tr>
+<tr><td>--cell-padding</td><td>Adds extra pixels around each cell to reduce cracks or seams.</td></tr>
+<tr><td>--mpp</td><td>Microns per pixel for physical scale metadata.</td></tr>
+<tr><td>--objective-power</td><td>Objective magnification label written to TIFF metadata.</td></tr>
+</table>
+
+<h2>7. Output and Compression</h2>
+<p>The engine writes TIFF output using a two-stage workflow:</p>
+<pre>patches -> temporary uncompressed TIFF -> compressed tiled pyramidal BigTIFF</pre>
+<p>The final TIFF conversion uses VIPS with the following defaults:</p>
+<table>
+<tr><th>Setting</th><th>Value</th></tr>
+<tr><td>Compression</td><td>JPEG</td></tr>
+<tr><td>JPEG quality</td><td>90</td></tr>
+<tr><td>Tile size</td><td>256 x 256</td></tr>
+<tr><td>Pyramid</td><td>Enabled</td></tr>
+<tr><td>Pyramid depth</td><td>onetile</td></tr>
+<tr><td>SubIFD pyramid</td><td>Disabled after QuPath crashes during testing</td></tr>
+<tr><td>BigTIFF</td><td>Enabled</td></tr>
+</table>
+<p>The temporary uncompressed TIFF is deleted after the compressed output is successfully written. During processing, disk usage temporarily includes both the uncompressed temporary file and the compressed final file.</p>
+
+<h2>8. Metadata Handling</h2>
+<p>The engine writes physical scale metadata using microns per pixel and objective power. If no MPP value is supplied, the default is 0.25 microns per pixel. Objective power is estimated from MPP when it is not explicitly supplied.</p>
+<table>
+<tr><th>MPP Range</th><th>Estimated Objective</th></tr>
+<tr><td>&lt; 0.35</td><td>40x</td></tr>
+<tr><td>&lt; 0.55</td><td>20x</td></tr>
+<tr><td>&lt; 1.10</td><td>10x</td></tr>
+<tr><td>Otherwise</td><td>5x</td></tr>
+</table>
+<p class="note">The engine cannot infer the true MPP from image pixels alone. MPP must come from source WSI metadata, scanner settings, QuPath properties, or a calibration target.</p>
+
+<h2>9. Test Results</h2>
+<p>The main test dataset contained 12,544 patches. The tested patch size was 1024 x 1024 with 50% base overlap and a jitter search range of +/-25%.</p>
+<table>
+<tr><th>Test</th><th>Observed Result</th></tr>
+<tr><td>Full averaging path</td><td>High runtime and blurry/doubled structures when jitter exists.</td></tr>
+<tr><td>Chunked average writer</td><td>Lower memory use, but still visually similar to averaging.</td></tr>
+<tr><td>Phase alignment with limited pairs</td><td>Fast test mode, but may leave visible patch boundaries because many regions remain anchored to the base grid.</td></tr>
+<tr><td>Full phase alignment with cell writer</td><td>Best current visual output. Mostly sharp and correct with a few local issues near blank or low-texture areas.</td></tr>
+</table>
+
+<h2>10. Known Limitations</h2>
+<ul>
+<li>Blank or mostly white patches provide little alignment signal and may rely heavily on filename coordinates.</li>
+<li>The current compressed TIFF workflow requires temporary disk space for an uncompressed intermediate file.</li>
+<li>Direct compressed tile writing is not yet implemented.</li>
+<li>QuPath metadata and pyramid behavior should be verified after each writer change.</li>
+<li>GPU acceleration is not currently implemented.</li>
+</ul>
+
+<h2>11. Future Work</h2>
+<ul>
+<li>Add patch metadata sidecar support for MPP, objective power, source dimensions, patch size, and overlap.</li>
+<li>Add preflight checks for VIPS availability, disk space, patch readability, and output writability.</li>
+<li>Add safe compressed-output replacement so failed compression does not remove a previous good file.</li>
+<li>Add optional temporary directory control for large intermediate files.</li>
+<li>Investigate direct compressed tiled TIFF writing to avoid the uncompressed temporary file.</li>
+<li>Add optional seam reduction through feathered cell writing or illumination correction.</li>
+<li>Profile alignment versus writing and compression time before considering GPU acceleration.</li>
+</ul>
+
+<h2>12. Conclusion</h2>
+<p>The stitch engine now provides a focused, custom pipeline for patch-based image reconstruction with variable overlap and jitter correction. The current best workflow uses filename coordinates, phase-based alignment, global layout solving, and cell-based TIFF writing followed by VIPS compression. The engine is suitable for continued testing on microscopy and PCB-style patch datasets, with the most important future work being metadata automation, safer output handling, and reduced temporary disk usage.</p>
+</body>
+</html>
