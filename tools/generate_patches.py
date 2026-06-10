@@ -1,9 +1,17 @@
 import argparse
 import os
 import random
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from stitch_engine._vips import configure_project_vips
+
+configure_project_vips()
+
 import pyvips
-
-
 # ============================================================
 # WINDOWS VIPS
 # ============================================================
