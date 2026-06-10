@@ -61,10 +61,10 @@ def generate_patches(
     if seed is not None:
         random.seed(seed)
 
-    image = pyvips.Image.new_from_file(
-        image_path,
-        level=level
-    )
+    if level and level > 0:
+        image = pyvips.Image.new_from_file(image_path, level=level)
+    else:
+        image = pyvips.Image.new_from_file(image_path)
 
     image = prepare_image(image)
 
@@ -135,15 +135,18 @@ def generate_patches(
                 filename
             )
 
-            patch.tiffsave(
-                save_path,
-                tile=True,
-                tile_width=256,
-                tile_height=256,
-                compression=compression,
-                Q=quality,
-                bigtiff=True
-            )
+            save_kwargs = {
+                "tile": True,
+                "tile_width": 256,
+                "tile_height": 256,
+            }
+
+            if compression.lower() not in {"none", "raw", "uncompressed"}:
+                save_kwargs["compression"] = compression
+                if compression.lower() == "jpeg":
+                    save_kwargs["Q"] = quality
+
+            patch.tiffsave(filename, **save_kwargs)
 
             count += 1
             col += 1
