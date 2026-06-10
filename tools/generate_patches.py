@@ -74,6 +74,7 @@ def generate_patches(
     stride = int(round(patch_size * (1.0 - overlap_percent)))
     max_jitter = int(round(patch_size * jitter_percent))
 
+    output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"\nImage: {width} x {height}")
@@ -81,6 +82,7 @@ def generate_patches(
     print(f"Overlap: {overlap_percent:.0%}")
     print(f"Base stride: {stride}px")
     print(f"Jitter: ±{max_jitter}px ({jitter_percent:.0%} of patch size)")
+    print(f"Output directory: {output_dir}")
 
     count = 0
     row = 0
@@ -124,15 +126,11 @@ def generate_patches(
 
             # Filename stores base/camera coordinate only.
             # Stitcher does not know actual jitter.
-            filename = (
+            filename = os.path.join(
+                output_dir,
                 f"idx{count:06d}_"
                 f"x{base_x:06d}_"
                 f"y{base_y:06d}.tif"
-            )
-
-            save_path = os.path.join(
-                output_dir,
-                filename
             )
 
             save_kwargs = {
